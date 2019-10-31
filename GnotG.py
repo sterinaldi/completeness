@@ -22,7 +22,7 @@ dDL=3.34
 GW = SkyCoord(ra = '13h07m05.49s', dec = '23d23m02.0s',
             unit=('hourangle','deg'))
 
-def Gaussexp(x, mu, sigma)
+def Gaussexp(x, mu, sigma):
     return -(x-mu)**2/(2*sigma**2)
 
 def Mstar(omega):
@@ -61,21 +61,24 @@ def Mthreshold(DL, mth = 27.0):
 def mabs(m, DL):
     return m - 5.0*np.log10(1e5*DL)
 
-
 def HubbleLaw(D_L, omega): # Da rivedere: test solo 1 ordine
     return D_L*omega.h/(3e3) # Sicuro del numero?
 
 def gaussian(x,x0,sigma):
     return np.exp(-(x-x0)**2/(2*sigma**2))/(sigma*np.sqrt(2*np.pi))
 
-class completeness_G(cpnest.model.Model):
+class completeness(cpnest.model.Model):
 
     def __init__(self, catalog):
-        self.names=['z', 'h', 'om', 'ol']
+        self.names=['zgw', 'h', 'om', 'ol', 'mgal', 'zgal', 'alpha', 'delta']
         self.bounds=[[0.001,0.012],
                     [0.5,1.],
                     [0.04,1.],
-                    [0.,1.]]
+                    [0.,1.],
+                    [15.0,30.0],
+                    [0.001,0.012],
+                    [GW.ra.rad-0.1,GW.ra.rad+0.1],
+                    [GW.dec.rad-0.1,GW.dec.rad+0.1]]
 
         self.omega = lal.CreateCosmologicalParameters(0.7,0.5,0.5,-1.,0.,0.)
         self.catalog = catalog
@@ -85,8 +88,12 @@ class completeness_G(cpnest.model.Model):
             if abs(lal.LuminosityDistance(self.omega, self.catalog['z'][i])- DL) > 4*dDL:
                 self.catalog = self.catalog.drop(i)
 
+    def log_prior(self,x):
+        if not(np.isfinite(super(completeness, self).log_prior(x))):
+            return -np.inf
+        return 0.0
 
-    def log_prior(self, x):
+    def log_prob_detected_galaxies(self, x):
         # controllo finitezza e theta(M-Mth)
 
         if not(np.isfinite(super(completeness, self).log_prior(x))):
@@ -95,7 +102,7 @@ class completeness_G(cpnest.model.Model):
             self.omega.h = x['h']
             self.omega.om = x['om']
             self.omega.ol = x['ol']
-            zgw  = x['z']
+            zgw  = x['zgw']
 
             logP = 0.0
             for zi,mi in zip(self.catalog['z'],self.catalog['Bmag']):
@@ -110,31 +117,7 @@ class completeness_G(cpnest.model.Model):
 
             return logP
 
-    def log_likelihood(self, x):
-        logL = 0.0
-        zgw  = x['z']
-
-        logL += np.log(gaussian(lal.LuminosityDistance(self.omega, zgw), DL,dDL))
-        logL += logsumexp([Gaussexp(zgw, zgi, zgi/10.0) for zgi in self.catalog['z']])
-        logL += logsumexp([Gaussexp(ai, GW.ra.rad, GW.ra.rad/10.0) for ai in self.catalog['RAJ2000']])
-        logL += logsumexp([Gaussexp(di, GW.ra.rad, GW.ra.rad/10.0) for di in self.catalog['DEJ2000']])
-        return logL
-
-class completeness_notG(cpnest.model.model):
-
-    def __init__(self):
-        self.names=['z', 'h', 'om', 'ol', 'alpha', 'delta', 'm']
-        self.bounds=[[0.001,0.012],
-                    [0.5,1.],
-                    [0.04,1.],
-                    [0.,1.],
-                    [0,2*np.pi],
-                    [-np.pi,np.pi],
-                    [15,30]]
-
-        self.omega = lal.CreateCosmologicalParameters(0.7,0.5,0.5,-1.,0.,0.)
-
-    def log_prior(self, x):
+    def log_prob_non_detected_galaxies(self, x):
         # controllo finitezza e theta(M-Mth)
 
         if not(np.isfinite(super(completeness, self).log_prior(x))):
@@ -143,28 +126,90 @@ class completeness_notG(cpnest.model.model):
             self.omega.h = x['h']
             self.omega.om = x['om']
             self.omega.ol = x['ol']
-            zgal = x['z']
+            zgal  = x['zgal']
+            mgal  = x['mgal']
+            logP = 0.0
+            K = 100
             DL = lal.LuminosityDistance(self.omega, zgal)
-            Mabsi = Mabs(x['m'], zgal)
-            logP = 0.
-
-            if Mthreshold(DL) > Mabsi:
+            Mabsi = mabs(mgal,DL)
+            if  Mthreshold(DL) > Mabsi:
                 return -np.inf
+            else:
+                logP += np.log(Schechter(Mabsi, self.omega))
+                logP += np.log(lal.ComovingVolumeElement(zgal, self.omega))
 
-            logP += np.log(Schechter(Mabsi, self.omega))
-            logP += np.log(lal.ComovingVolumeElement(zgal, self.omega))
-
-            return logP
-
+            return K*logP
+            
     def log_likelihood(self, x):
+        logL_detected = 0.0
+        zgw  = x['zgw']
+        log_p_det = self.log_prob_detected_galaxies(x)
+        if np.isinf(log_p_det):
+            return -np.inf
+        # detected
+        logL_detected += np.log(gaussian(lal.LuminosityDistance(self.omega, zgw), DL,dDL))
+        logL_detected += logsumexp([Gaussexp(zgw, zgi, zgi/10.0) for zgi in self.catalog['z']])
+        logL_detected += logsumexp([Gaussexp(ai, GW.ra.rad, GW.ra.rad/10.0) for ai in self.catalog['RAJ2000']])
+        logL_detected += logsumexp([Gaussexp(di, GW.ra.rad, GW.ra.rad/10.0) for di in self.catalog['DEJ2000']])
+        logL_detected += log_p_det
+        
+        # non detected
+        logL_non_detected = 0.0
+        zgal  = x['zgal']
+        log_p_non_det = self.log_prob_non_detected_galaxies(x)
+        if np.isinf(log_p_non_det):
+            return -np.inf
+        logL_non_detected += np.log(gaussian(lal.LuminosityDistance(self.omega, zgal), DL,dDL))
+        logL_non_detected += np.log(gaussian(x['alpha'], GW.ra.rad, GW.ra.rad/10.0))
+        logL_non_detected += np.log(gaussian(x['delta'], GW.dec.rad, GW.dec.rad/10.0))
+        logL_non_detected += log_p_non_det
+        return logsumexp([logL_detected,logL_non_detected])
 
-        logL = 0.0
-        zgal  = x['z']
-
-        logL += np.log(gaussian(lal.LuminosityDistance(self.omega, zgal), DL,dDL))
-        logL += np.log(gaussian(x['alpha'], GW.ra.rad, GW.ra.rad/10.0))
-        logL += np.log(gaussian(x['delta'], GW.dec.rad, GW.dec.rad/10.0))
-        return logL
+#class completeness_notG(cpnest.model.model):
+#
+#    def __init__(self):
+#        self.names=['z', 'h', 'om', 'ol', 'alpha', 'delta', 'm']
+#        self.bounds=[[0.001,0.012],
+#                    [0.5,1.],
+#                    [0.04,1.],
+#                    [0.,1.],
+#                    [0,2*np.pi],
+#                    [-np.pi,np.pi],
+#                    [15,30]]
+#
+#        self.omega = lal.CreateCosmologicalParameters(0.7,0.5,0.5,-1.,0.,0.)
+#
+#    def log_prior(self, x):
+#        # controllo finitezza e theta(M-Mth)
+#
+#        if not(np.isfinite(super(completeness, self).log_prior(x))):
+#            return -np.inf
+#        else:
+#            self.omega.h = x['h']
+#            self.omega.om = x['om']
+#            self.omega.ol = x['ol']
+#            zgal = x['z']
+#            DL = lal.LuminosityDistance(self.omega, zgal)
+#            Mabsi = Mabs(x['m'], zgal)
+#            logP = 0.
+#
+#            if Mthreshold(DL) > Mabsi:
+#                return -np.inf
+#
+#            logP += np.log(Schechter(Mabsi, self.omega))
+#            logP += np.log(lal.ComovingVolumeElement(zgal, self.omega))
+#
+#            return logP
+#
+#    def log_likelihood(self, x):
+#
+#        logL = 0.0
+#        zgal  = x['z']
+#
+#        logL += np.log(gaussian(lal.LuminosityDistance(self.omega, zgal), DL,dDL))
+#        logL += np.log(gaussian(x['alpha'], GW.ra.rad, GW.ra.rad/10.0))
+#        logL += np.log(gaussian(x['delta'], GW.dec.rad, GW.dec.rad/10.0))
+#        return logL
 
 
 
@@ -173,13 +218,18 @@ if __name__ == '__main__':
     #Gal_cat = GalInABox([190,200],[-25,-15], u.deg, u.deg, catalog='GLADE')[::100]
 
     NGC4993 = Vizier.query_object('NGC4993', catalog = 'GLADE')[1].to_pandas()
-    M = completeness_G(NGC4993)
-    M.dropgal()
-    N = completeness_notG()
 
-    job_G = cpnest.CPNest(M, verbose=2, nthreads=4, nlive=1000, maxmcmc=1024)
-    job_G.run()
-    job_notG = cpnest.CPNest(N, verbose=2, nthreads=4, nlive=1000, maxmcmc=1024)
-    job_notG.run()
+    M = completeness(NGC4993)
+##    M.dropgal()
+#    print (M.catalog)
+#    exit()
+    job = cpnest.CPNest(M, verbose=2, nthreads=4, nlive=1000, maxmcmc=1024)
+    job.run()
+#    N = completeness_notG()
+#
+#    job_G = cpnest.CPNest(M, verbose=2, nthreads=4, nlive=1000, maxmcmc=1024)
+#    job_G.run()
+#    job_notG = cpnest.CPNest(N, verbose=2, nthreads=4, nlive=1000, maxmcmc=1024)
+#    job_notG.run()
 
 # GLADE galaxy catalog
