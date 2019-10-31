@@ -128,7 +128,7 @@ class completeness(cpnest.model.Model):
             zgal  = x['zgal']
             mgal  = x['mgal']
             logP = 0.0
-            K = 380
+            K = 38
             DL = lal.LuminosityDistance(self.omega, zgal)
             Mabsi = mabs(mgal,DL)
             if  Mthreshold(DL) > Mabsi:
@@ -149,7 +149,7 @@ class completeness(cpnest.model.Model):
             return -np.inf
         # detected
         logL_detected += np.log(gaussian(lal.LuminosityDistance(self.omega, zgw), DL,dDL))
-        logL_detected += logsumexp([Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(ai, GW.ra.rad, GW.ra.rad/10.0)+Gaussexp(di, GW.dec.rad, GW.dec.rad/10.0) for zgi,ai,di in zip(self.catalog['z'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
+        logL_detected += logsumexp([Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(ai, GW.ra.rad, 1.0/10.0)+Gaussexp(di, GW.dec.rad, 1.0/10.0) for zgi,ai,di in zip(self.catalog['z'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
         logL_detected += log_p_det
         
         # non detected
@@ -161,8 +161,8 @@ class completeness(cpnest.model.Model):
             return -np.inf
 
         logL_non_detected += np.log(gaussian(lal.LuminosityDistance(self.omega, zgal), DL,dDL))
-        logL_non_detected += np.log(gaussian(x['alpha'], GW.ra.rad, GW.ra.rad/10.0))
-        logL_non_detected += np.log(gaussian(x['delta'], GW.dec.rad, GW.dec.rad/10.0))
+        logL_non_detected += np.log(gaussian(x['alpha'], GW.ra.rad, 1.0/10.0))
+        logL_non_detected += np.log(gaussian(x['delta'], GW.dec.rad, 1.0/10.0))
         logL_non_detected += log_p_non_det
         logL = logsumexp([logL_detected,logL_non_detected])
 #        print(logL,logL_detected,logL_non_detected,log_p_det,log_p_non_det)
