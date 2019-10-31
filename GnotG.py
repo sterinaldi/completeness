@@ -52,7 +52,7 @@ def Schechter(M, omega, alpha = -1.07):
     '''
     return Schechter_unnormed(M, omega, alpha = alpha)/normalise(omega, alpha = alpha)
 
-def Mthreshold(DL, mth = 27.0):
+def Mthreshold(DL, mth = 24.0):
     '''
     Magnitudine assoluta di soglia
     '''
@@ -75,7 +75,7 @@ class completeness(cpnest.model.Model):
                     [0.5,1.],
                     [0.04,1.],
                     [0.,1.],
-                    [15.0,30.0],
+                    [24.0,30.0],
                     [0.001,0.012],
                     [GW.ra.rad-0.1,GW.ra.rad+0.1],
                     [GW.dec.rad-0.1,GW.dec.rad+0.1]]
@@ -109,7 +109,6 @@ class completeness(cpnest.model.Model):
                 DL = lal.LuminosityDistance(self.omega, zi)
                 Mabsi = mabs(mi,DL)
                 if  Mthreshold(DL) < Mabsi:
-
                     return -np.inf
                 else:
                     logP += np.log(Schechter(Mabsi, self.omega))
@@ -129,10 +128,11 @@ class completeness(cpnest.model.Model):
             zgal  = x['zgal']
             mgal  = x['mgal']
             logP = 0.0
-            K = 100
+            K = 380
             DL = lal.LuminosityDistance(self.omega, zgal)
             Mabsi = mabs(mgal,DL)
             if  Mthreshold(DL) > Mabsi:
+                print(Mthreshold(DL),Mabsi)
                 return -np.inf
             else:
                 logP += np.log(Schechter(Mabsi, self.omega))
@@ -145,12 +145,11 @@ class completeness(cpnest.model.Model):
         zgw  = x['zgw']
         log_p_det = self.log_prob_detected_galaxies(x)
         if np.isinf(log_p_det):
+            print('failed 1!')
             return -np.inf
         # detected
         logL_detected += np.log(gaussian(lal.LuminosityDistance(self.omega, zgw), DL,dDL))
-        logL_detected += logsumexp([Gaussexp(zgw, zgi, zgi/10.0) for zgi in self.catalog['z']])
-        logL_detected += logsumexp([Gaussexp(ai, GW.ra.rad, GW.ra.rad/10.0) for ai in self.catalog['RAJ2000']])
-        logL_detected += logsumexp([Gaussexp(di, GW.ra.rad, GW.ra.rad/10.0) for di in self.catalog['DEJ2000']])
+        logL_detected += logsumexp([Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(ai, GW.ra.rad, GW.ra.rad/10.0)+Gaussexp(di, GW.dec.rad, GW.dec.rad/10.0) for zgi,ai,di in zip(self.catalog['z'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
         logL_detected += log_p_det
         
         # non detected
@@ -158,61 +157,16 @@ class completeness(cpnest.model.Model):
         zgal  = x['zgal']
         log_p_non_det = self.log_prob_non_detected_galaxies(x)
         if np.isinf(log_p_non_det):
+            print('failed 2!')
             return -np.inf
+
         logL_non_detected += np.log(gaussian(lal.LuminosityDistance(self.omega, zgal), DL,dDL))
         logL_non_detected += np.log(gaussian(x['alpha'], GW.ra.rad, GW.ra.rad/10.0))
         logL_non_detected += np.log(gaussian(x['delta'], GW.dec.rad, GW.dec.rad/10.0))
         logL_non_detected += log_p_non_det
-        return logsumexp([logL_detected,logL_non_detected])
-
-#class completeness_notG(cpnest.model.model):
-#
-#    def __init__(self):
-#        self.names=['z', 'h', 'om', 'ol', 'alpha', 'delta', 'm']
-#        self.bounds=[[0.001,0.012],
-#                    [0.5,1.],
-#                    [0.04,1.],
-#                    [0.,1.],
-#                    [0,2*np.pi],
-#                    [-np.pi,np.pi],
-#                    [15,30]]
-#
-#        self.omega = lal.CreateCosmologicalParameters(0.7,0.5,0.5,-1.,0.,0.)
-#
-#    def log_prior(self, x):
-#        # controllo finitezza e theta(M-Mth)
-#
-#        if not(np.isfinite(super(completeness, self).log_prior(x))):
-#            return -np.inf
-#        else:
-#            self.omega.h = x['h']
-#            self.omega.om = x['om']
-#            self.omega.ol = x['ol']
-#            zgal = x['z']
-#            DL = lal.LuminosityDistance(self.omega, zgal)
-#            Mabsi = Mabs(x['m'], zgal)
-#            logP = 0.
-#
-#            if Mthreshold(DL) > Mabsi:
-#                return -np.inf
-#
-#            logP += np.log(Schechter(Mabsi, self.omega))
-#            logP += np.log(lal.ComovingVolumeElement(zgal, self.omega))
-#
-#            return logP
-#
-#    def log_likelihood(self, x):
-#
-#        logL = 0.0
-#        zgal  = x['z']
-#
-#        logL += np.log(gaussian(lal.LuminosityDistance(self.omega, zgal), DL,dDL))
-#        logL += np.log(gaussian(x['alpha'], GW.ra.rad, GW.ra.rad/10.0))
-#        logL += np.log(gaussian(x['delta'], GW.dec.rad, GW.dec.rad/10.0))
-#        return logL
-
-
-
+        logL = logsumexp([logL_detected,logL_non_detected])
+#        print(logL,logL_detected,logL_non_detected,log_p_det,log_p_non_det)
+        return logL
 
 if __name__ == '__main__':
     #Gal_cat = GalInABox([190,200],[-25,-15], u.deg, u.deg, catalog='GLADE')[::100]
@@ -223,7 +177,7 @@ if __name__ == '__main__':
 ##    M.dropgal()
 #    print (M.catalog)
 #    exit()
-    job = cpnest.CPNest(M, verbose=2, nthreads=4, nlive=1000, maxmcmc=1024)
+    job = cpnest.CPNest(M, verbose=2, nthreads=4, nlive=1000, maxmcmc=100)
     job.run()
 #    N = completeness_notG()
 #
