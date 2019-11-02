@@ -28,9 +28,13 @@ def LumDist(z, omega):
 def dLumDist(z, omega):
     return 3e3*(1+(1-omega.om+omega.ol)*z)/omega.h
 
-def RedshiftCalculation(LD, omega, zinit=0.3):
+def RedshiftCalculation(LD, omega, zinit=0.3, limit = 0.001):
+    '''
+    Calcola per ricorsione il redshift data una certa luminosità.
+    Variando il parametro limit si ritocca il numero di cifre significative.
+    '''
     LD_test = LumDist(zinit, omega)
-    if abs(LD-LD_test) < 0.001 :
+    if abs(LD-LD_test) < limit :
         return zinit
     znew = zinit - (LD_test - LD)/dLumDist(zinit,omega)
     return RedshiftCalculation(LD, omega, zinit = znew)
