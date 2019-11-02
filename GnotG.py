@@ -22,6 +22,19 @@ dDL=3.34
 GW = SkyCoord(ra = '13h07m05.49s', dec = '23d23m02.0s',
             unit=('hourangle','deg'))
 
+def LumDist(z, omega):
+    return 3e3*(z + (1-omega.om +omega.ol)*z**2/2.)/omega.h
+
+def dLumDist(z, omega):
+    return 3e3*(1+(1-omega.om+omega.ol)*z)/omega.h
+
+def RedshiftCalculation(LD, omega, zinit=0.3):
+    LD_test = LumDist(zinit, omega)
+    if abs(LD-LD_test) < 0.001 :
+        return zinit
+    znew = zinit - (LD_test - LD)/dLumDist(zinit,omega)
+    return RedshiftCalculation(LD, omega, zinit = znew)
+
 def Gaussexp(x, mu, sigma):
     return -(x-mu)**2/(2*sigma**2)
 
@@ -84,8 +97,10 @@ class completeness(cpnest.model.Model):
         self.catalog = catalog
 
     def dropgal(self):
+        z_GW  = RedshiftCalculation(DL, self.omega)
+        dz_GW = RedshiftCalculation(dDL, self.omega)
         for i in self.catalog.index:
-            if abs(lal.LuminosityDistance(self.omega, self.catalog['z'][i])- DL) > 4*dDL:
+            if gaussian(self.catalog['z'][i], z_GW, dz_GW) < 0.01:
                 self.catalog = self.catalog.drop(i)
 
     def log_prior(self,x):
@@ -139,7 +154,7 @@ class completeness(cpnest.model.Model):
                 logP += np.log(lal.ComovingVolumeElement(zgal, self.omega))
 
             return K*logP
-            
+
     def log_likelihood(self, x):
         logL_detected = 0.0
         zgw  = x['zgw']
@@ -151,7 +166,7 @@ class completeness(cpnest.model.Model):
         logL_detected += np.log(gaussian(lal.LuminosityDistance(self.omega, zgw), DL,dDL))
         logL_detected += logsumexp([Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(ai, GW.ra.rad, 1.0/10.0)+Gaussexp(di, GW.dec.rad, 1.0/10.0) for zgi,ai,di in zip(self.catalog['z'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
         logL_detected += log_p_det
-        
+
         # non detected
         logL_non_detected = 0.0
         zgal  = x['zgal']
