@@ -141,27 +141,31 @@ class completeness(cpnest.model.Model):
         Mabsi = mabs(mgal,DL)
         
         if  Mthreshold(DL) > Mabsi:
-#            print(Mthreshold(DL),Mabsi)
             return -np.inf
         else:
+            # compute the allowed volume for the source
             gDL=33.4
             gdDL=3.34
             V = (4./3.)*np.pi*(gDL-gdDL)**3
+            # find the number density of galaxies from the low end of the Schecter
+            # distribution
             n0 = 1./normalise(self.omega, Mmax = Mth)
             K = np.int(V*n0)-len(self.catalog)
-#            print('=== ehi ======> {0} {1} {2} {3} ======='.format(K, n0, V, n0*V))
-            if K <= 0.0:
-                return -np.inf
 
+            if K <= 0.0:
+                # no galaxies are missing
+                return -np.inf
+            
             logP += np.log(Schechter(Mabsi, self.omega))
             logP += np.log(lal.ComovingVolumeElement(zgal, self.omega))
 #            norm = np.log(dblquad(normalise_integrand, self.bounds[0][0], self.bounds[0][1],
 #                      lambda x: mabs(mgal,lal.LuminosityDistance(self.omega, self.bounds[4][0])),
 #                      lambda x: mabs(mgal,lal.LuminosityDistance(self.omega, self.bounds[4][0])),
 #                      args = (self.omega, 1, ))[0])
-            norm = K*(np.log(Schechter(mabs(self.bounds[4][1],lal.LuminosityDistance(self.omega, self.bounds[0][1])),self.omega))                    +np.log(lal.ComovingVolumeElement(self.bounds[0][1], self.omega))) #approximate integral with max of function
+            # since for alpha < 0.0 the Schecter distribution diverges, approximate the integral with the
+            # maximum of the integral
+            norm = K*(np.log(Schechter(mabs(self.bounds[4][1],lal.LuminosityDistance(self.omega, self.bounds[0][1])),self.omega))                    +np.log(lal.ComovingVolumeElement(self.bounds[0][1], self.omega)))
 
-#        print('======> {0} {1} {2} {3} ======='.format(K, logP, norm, K*(logP-norm)))
         return K*(logP-norm)
             
     def log_likelihood(self, x):
@@ -176,33 +180,19 @@ class completeness(cpnest.model.Model):
             logL_non_detected += Gaussexp(x['alpha'], GW.ra.rad, 1.0/10.0)
             logL_non_detected += Gaussexp(x['delta'], GW.dec.rad, 1.0/10.0)
             logL_non_detected += log_p_non_det
-#        logL = logL_non_detected
 
+        # detected
         logL_detected = 0.0
         zgw  = x['zgw']
-        log_p_det = logsumexp([0.0,log_p_non_det],b=[1,-1]) #np.log(1.0-np.exp(log_p_non_det))
-#        self.log_prob_detected_galaxies(x)
-#        if np.isinf(log_p_det):
-#            print('failed 1!')
-#            return -np.inf
-        # detected
+        # estimate the probability of detecting a galaxy as 1-prob_non_detection
+        log_p_det = logsumexp([0.0,log_p_non_det],b=[1,-1])
         
         logL_detected += Gaussexp(lal.LuminosityDistance(self.omega, zgw), DL, dDL)
         logL_detected += logsumexp([Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(np.radians(rai), GW.ra.rad, 1.0/10.0)+Gaussexp(np.pi/2.0-np.radians(di), GW.dec.rad, 1.0/10.0) for zgi,rai,di in zip(self.catalog['z'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
 
         logL_detected += log_p_det
-#        logL = logL_detected
-
         logL = logsumexp([logL_detected,logL_non_detected])
-#        if logL > -100:
-#            print('parameter = {0}'.format(x))
-#            print('logl:',logL,
-#                    'logl-det:',logL_detected,
-#                    'logl-ndet:',logL_non_detected,
-#                    'logp_d:',log_p_det,
-#                    'logp_nd:',log_p_non_det,
-#                    'normed?:',np.exp(logsumexp([log_p_det,log_p_non_det])))
-#            exit()
+        
         return logL
 
 if __name__ == '__main__':
@@ -223,7 +213,7 @@ if __name__ == '__main__':
 #    exit()
 #    print (M.catalog)
 #    exit()
-    job = cpnest.CPNest(M, verbose=2, nthreads=8, nlive=5000, maxmcmc=1000)
+    job = cpnest.CPNest(M, verbose=2, nthreads=4, nlive=5000, maxmcmc=1000)
     job.run()
 #    N = completeness_notG()
 #
