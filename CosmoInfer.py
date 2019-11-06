@@ -74,7 +74,24 @@ def normalise_integrand(M, z, omega, K):
     PV = lal.ComovingVolumeElement(z, omega)
 #    print(" ==== integrand ===",PS,PV,K,PS*PV,(PS*PV)**K)
     return (PS*PV)**K
-    
+
+def LumDist(z, omega):
+    return 3e3*(z + (1-omega.om +omega.ol)*z**2/2.)/omega.h
+
+def dLumDist(z, omega):
+    return 3e3*(1+(1-omega.om+omega.ol)*z)/omega.h
+
+def RedshiftCalculation(LD, omega, zinit=0.3, limit = 0.001):
+    '''
+    Calcola per ricorsione il redshift data una certa luminosità.
+    Variando il parametro limit si ritocca il numero di cifre significative.
+    '''
+    LD_test = LumDist(zinit, omega)
+    if abs(LD-LD_test) < limit :
+        return zinit
+    znew = zinit - (LD_test - LD)/dLumDist(zinit,omega)
+    return RedshiftCalculation(LD, omega, zinit = znew)
+
 class completeness(cpnest.model.Model):
     """
     p(O|W(G+~G)) = p(O) p(W(G+~G)|O)/(p(W(G+~G))
@@ -95,9 +112,9 @@ class completeness(cpnest.model.Model):
         self.omega = lal.CreateCosmologicalParameters(0.7,0.5,0.5,-1.,0.,0.)
         self.catalog = catalog
 
-    def dropgal(self):
+    def dropgal(self, nsigma = 4):
         for i in self.catalog.index:
-            if self.catalog['z'][i] > self.bounds[0][1]:
+            if (self.catalog['z'][i] > RedshiftCalculation(DL+nsigma*dDL, self.omega)) or (self.catalog['z'][i] < RedshiftCalculation(DL-nsigma*dDL, self.omega)):
                 self.catalog = self.catalog.drop(i)
 
     def log_prior(self,x):
@@ -139,7 +156,7 @@ class completeness(cpnest.model.Model):
         DL = lal.LuminosityDistance(self.omega, zgal)
         Mth = Mthreshold(DL)
         Mabsi = mabs(mgal,DL)
-        
+
         if  Mthreshold(DL) > Mabsi:
             return -np.inf
         else:
@@ -155,7 +172,7 @@ class completeness(cpnest.model.Model):
             if K <= 0.0:
                 # no galaxies are missing
                 return -np.inf
-            
+
             logP += np.log(Schechter(Mabsi, self.omega))
             logP += np.log(lal.ComovingVolumeElement(zgal, self.omega))
 #            norm = np.log(dblquad(normalise_integrand, self.bounds[0][0], self.bounds[0][1],
@@ -164,10 +181,10 @@ class completeness(cpnest.model.Model):
 #                      args = (self.omega, 1, ))[0])
             # since for alpha < 0.0 the Schecter distribution diverges, approximate the integral with the
             # maximum of the integral
-            norm = K*(np.log(Schechter(mabs(self.bounds[4][1],lal.LuminosityDistance(self.omega, self.bounds[0][1])),self.omega))                    +np.log(lal.ComovingVolumeElement(self.bounds[0][1], self.omega)))
+            norm = K*(np.log(Schechter(mabs(self.bounds[4][1],lal.LuminosityDistance(self.omega, self.bounds[0][1])),self.omega))+np.log(lal.ComovingVolumeElement(self.bounds[0][1], self.omega)))
 
         return K*(logP-norm)
-            
+
     def log_likelihood(self, x):
         # non detected
         logL_non_detected = 0.0
@@ -186,40 +203,32 @@ class completeness(cpnest.model.Model):
         zgw  = x['zgw']
         # estimate the probability of detecting a galaxy as 1-prob_non_detection
         log_p_det = logsumexp([0.0,log_p_non_det],b=[1,-1])
-        
+
         logL_detected += Gaussexp(lal.LuminosityDistance(self.omega, zgw), DL, dDL)
         logL_detected += logsumexp([Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(np.radians(rai), GW.ra.rad, 1.0/10.0)+Gaussexp(np.pi/2.0-np.radians(di), GW.dec.rad, 1.0/10.0) for zgi,rai,di in zip(self.catalog['z'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
 
         logL_detected += log_p_det
         logL = logsumexp([logL_detected,logL_non_detected])
-        
+
         return logL
 
 if __name__ == '__main__':
-    
+
     Gal_cat = GalInABox([190,200],[-22,-17], u.deg, u.deg, catalog='GLADE')#[::100]
     M = completeness(Gal_cat)
 #    NGC4993 = Vizier.query_object('NGC4993', catalog = 'GLADE')[1].to_pandas()
 #    M = completeness(NGC4993)
-    M.dropgal()
-#    print([gi for gi in Gal_cat['Bmag']])
-#    import matplotlib.pyplot as plt
-#    from mpl_toolkits.mplot3d import Axes3D
-#    fig = plt.figure()
-#    ax = fig.add_subplot(111, projection='3d')
-#    S = ax.scatter(Gal_cat['RAJ2000'], Gal_cat['DEJ2000'], Gal_cat['Bmag'], c=Gal_cat['z'])
-#    plt.colorbar(S)
-#    plt.show()
-#    exit()
+    # M.dropgal(nsigma = 3)
+    # print([zi for zi in M.catalog['z']])
+    # import matplotlib.pyplot as plt
+    # from mpl_toolkits.mplot3d import Axes3D
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
+    # S = ax.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], M.catalog['z'], c=M.catalog['Bmag'])
+    # plt.colorbar(S)
+    # plt.show()
+    # exit()
 #    print (M.catalog)
 #    exit()
     job = cpnest.CPNest(M, verbose=2, nthreads=4, nlive=5000, maxmcmc=1000)
     job.run()
-#    N = completeness_notG()
-#
-#    job_G = cpnest.CPNest(M, verbose=2, nthreads=4, nlive=1000, maxmcmc=1024)
-#    job_G.run()
-#    job_notG = cpnest.CPNest(N, verbose=2, nthreads=4, nlive=1000, maxmcmc=1024)
-#    job_notG.run()
-
-# GLADE galaxy catalog
