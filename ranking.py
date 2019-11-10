@@ -4,10 +4,15 @@
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 
+import matplotlib.pyplot as plt
 
 import numpy as np
+import pandas as pd
+from astropy.coordinates import SkyCoord
+from astroquery.vizier import Vizier
 import lal
 
+from scipy import interpolate
 from scipy.special import logsumexp
 import cpnest, cpnest.model
 
@@ -58,7 +63,7 @@ def RedshiftCalculation(LD, omega, zinit=0.3, limit = 0.001):
     znew = zinit - (LD_test - LD)/dLumDist(zinit,omega)
     return RedshiftCalculation(LD, omega, zinit = znew)
 
-def GalInABox(ra, dec, ra_unit, dec_unit, catalog = 'GLADE', all = False):
+def GalInABox(ra, dec, ra_unit, dec_unit, catalog = 'GLADE2', all = False):
     """
     Given two RA, DEC intervals (thought as the boundaries of a shape), the function
     returns a Pandas DataFrame with all the galaxies in CATALOG which position is within
@@ -94,7 +99,7 @@ def GalInABox(ra, dec, ra_unit, dec_unit, catalog = 'GLADE', all = False):
     v.ROW_LIMIT=-1
     ra     = np.array(ra)
     dec    = np.array(dec)
-    center = sc(ra.mean(), dec.mean(), unit = (ra_unit, dec_unit))
+    center = SkyCoord(ra.mean(), dec.mean(), unit = (ra_unit, dec_unit))
     width  = (ra.max()-ra.min())/2.*ra_unit
     height = (dec.max()-dec.min())/2.*dec_unit
 
@@ -165,3 +170,64 @@ def check_in_95(boundaries, RA, DEC):
         return True
     else:
         return False
+
+class ranking(cpnest.model.Model):
+
+    def __init__(self, catalog, omega):
+        self.names=['zgw']
+        self.bounds=[[0.001,0.015]]
+
+# 0.7,0.5,0.5,-1.,0.,0.
+        self.omega   = omega
+        self.catalog = catalog
+
+    def dropgal(self, nsigma = 4):
+        for i in self.catalog.index:
+            if (self.catalog['z'][i] > RedshiftCalculation(DL+nsigma*dDL, self.omega)) or (self.catalog['z'][i] < RedshiftCalculation(DL-nsigma*dDL, self.omega)):
+                self.catalog = self.catalog.drop(i)
+
+    def log_prior(self,x):
+        if not(np.isfinite(super(ranking, self).log_prior(x))):
+            return -np.inf
+        return 0.
+
+    def log_likelihood(self, x):
+        logL = 0.
+        zgw = x['zgw']
+        logL = logsumexp([Gaussexp(lal.LuminosityDistance(self.omega, zgi), DL, dDL)+Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(np.radians(rai), GW.ra.rad, 1.0/10.0)+Gaussexp(np.pi/2.0-np.radians(di), GW.dec.rad, 1.0/10.0) for zgi,rai,di in zip(self.catalog['z'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
+        return logL
+
+if __name__ == '__main__':
+    Gal_cat = GalInABox([190,200],[-22,-17], u.deg, u.deg, catalog='GLADE')#[::100]
+    omega = lal.CreateCosmologicalParameters(0.7,0.3,0.7,-1.,0.,0.)
+    M = ranking(Gal_cat, omega)
+    M.dropgal(nsigma = 6)
+    job = cpnest.CPNest(M, verbose=2, nthreads=4, nlive=1000, maxmcmc=1000)
+    job.run()
+    posteriors = job.get_posterior_samples()
+    just_z = [post[0] for post in posteriors]
+    hist   = plt.hist(just_z, bins = int(np.sqrt(len(just_z))))
+    z   = hist[1]
+    occ = hist[0]
+    y   = np.zeros(len(occ))
+    for i in range(len(z)-1):
+        y[i] = (z[i+1]+z[i])/2.
+    p_func = interpolate.interp1d(y, occ, kind = 'cubic', fill_value="extrapolate")
+    #
+    # app = np.linspace(min(y), max(y), 1000)
+    #
+    # plt.plot(app, p_func(app), marker = '')
+    # plt.savefig('z_post.png')
+
+    prob = M.catalog['z'].apply(p_func)
+    M.catalog['p'] = prob
+    M.catalog.sort_values('p')
+    print('Galaxies:')
+    print(M.catalog)
+
+    S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['p'])
+    plt.xlabel('ra')
+    plt.ylabel('dec')
+    bar = plt.colorbar(S)
+    bar.set_label('p')
+    plt.savefig('prob.png')
