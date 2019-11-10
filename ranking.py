@@ -205,11 +205,13 @@ class ranking(cpnest.model.Model):
         job.run()
         posteriors = job.get_posterior_samples()
         just_z = [post[0] for post in posteriors]
-        hist   = plt.hist(just_z, bins = int(np.sqrt(len(just_z))))
+        hist   = plt.hist(just_z, bins = int(np.sqrt(len(just_z))), density = True, stacked = True)
         z   = hist[1]
         occ = hist[0]
         y   = np.zeros(len(occ))
+        binwidth = z[1]-z[0]
         for i in range(len(z)-1):
+            binwidth = z[i+1]-z[i]
             y[i] = (z[i+1]+z[i])/2.
         M.p_func = interpolate.interp1d(y, occ, kind = 'cubic', fill_value = 0., bounds_error = False)
         prob = M.catalog['zsp2MPZ'].apply(M.p_func)
