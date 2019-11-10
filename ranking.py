@@ -225,9 +225,11 @@ if __name__ == '__main__':
     print('Galaxies:')
     print(M.catalog)
 
-    S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['p'])
     plt.xlabel('ra')
     plt.ylabel('dec')
+    plt.xlim([min(M.catalog['RAJ2000'])-0.1, max(M.catalog['RAJ2000'])+0.1])
+    plt.ylim([min(M.catalog['DEJ2000'])-0.1, max(M.catalog['DEJ2000'])+0.1])
+    S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['p'], marker = '+')
     bar = plt.colorbar(S)
     bar.set_label('p')
     plt.savefig('prob.png')
