@@ -31,11 +31,11 @@ given that we're making the assumption that the galaxy parameters are exactly kn
 apart from redshift, where proper motion has to be taken into account.
 '''
 
-DL=33.4
-dDL=3.34
+DL=39.4
+dDL=3.94
 m_threshold = 19.0
 
-GW = SkyCoord(ra = '13h07m05.49s', dec = '23d23m02.0s',
+GW = SkyCoord(ra = '13h07m05.49s', dec = '-23d23m02.0s',
             unit=('hourangle','deg'))
 
 def Gaussexp(x, mu, sigma):
@@ -90,13 +90,12 @@ def GalInABox(ra, dec, ra_unit, dec_unit, catalog = 'GLADE2', all = False):
     df: Pandas DataFrame
         DataFrame Pandas containing all the selected objects.
     """
-
     if all:
         v = Vizier()
     else:
-        v = Vizier(columns = ['RAJ2000', 'DEJ2000', 'z', 'Bmag'])
+        v = Vizier(columns = ['RAJ2000', 'DEJ2000', 'zsp2MPZ', 'GWGC'])
 
-    v.ROW_LIMIT=-1
+    v.ROW_LIMIT = 99999999
     ra     = np.array(ra)
     dec    = np.array(dec)
     center = SkyCoord(ra.mean(), dec.mean(), unit = (ra_unit, dec_unit))
@@ -105,12 +104,15 @@ def GalInABox(ra, dec, ra_unit, dec_unit, catalog = 'GLADE2', all = False):
 
     table = v.query_region(center, width = width, height = height, catalog = catalog)
     data  = pd.DataFrame()
-    for tablei in table:
-        data = data.append(tablei.to_pandas(), ignore_index = True)
-
+    # for tablei in table:
+    #     data = data.append(tablei.to_pandas(), ignore_index = True)
+    data = data.append(table[0].to_pandas())
+    print(data)
+    print('where?')
+    print(data.dropna())
     return data.dropna()
 
-def Galaxies95(boundaries, u_ra = u.rad, u_dec = u.rad, catalog = 'GLADE'):
+def Galaxies95(boundaries, u_ra = u.rad, u_dec = u.rad, catalog = 'glade2'):
     """
     Dato il contorno (al 95%?) della possibile regione di provenienza di una GW
     restituisce tutte le galassie in un catalogo a scelta che si trovano all'interno
@@ -183,7 +185,7 @@ class ranking(cpnest.model.Model):
 
     def dropgal(self, nsigma = 4):
         for i in self.catalog.index:
-            if (self.catalog['z'][i] > RedshiftCalculation(DL+nsigma*dDL, self.omega)) or (self.catalog['z'][i] < RedshiftCalculation(DL-nsigma*dDL, self.omega)):
+            if (self.catalog['zsp2MPZ'][i] > RedshiftCalculation(DL+nsigma*dDL, self.omega)) or (self.catalog['zsp2MPZ'][i] < RedshiftCalculation(DL-nsigma*dDL, self.omega)):
                 self.catalog = self.catalog.drop(i)
 
     def log_prior(self,x):
@@ -194,42 +196,40 @@ class ranking(cpnest.model.Model):
     def log_likelihood(self, x):
         logL = 0.
         zgw = x['zgw']
-        logL = logsumexp([Gaussexp(lal.LuminosityDistance(self.omega, zgi), DL, dDL)+Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(np.radians(rai), GW.ra.rad, 1.0/10.0)+Gaussexp(np.pi/2.0-np.radians(di), GW.dec.rad, 1.0/10.0) for zgi,rai,di in zip(self.catalog['z'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
+        logL = logsumexp([Gaussexp(lal.LuminosityDistance(self.omega, zgi), DL, dDL)+Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(np.radians(rai), GW.ra.rad, 2.0)+Gaussexp(np.pi/2.0-np.radians(di), GW.dec.rad, 2.0) for zgi,rai,di in zip(self.catalog['zsp2MPZ'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
         return logL
 
+    def run(self):
+        self.dropgal(nsigma = 6)
+        job = cpnest.CPNest(self, verbose=1, nthreads=4, nlive=1000, maxmcmc=1000)
+        job.run()
+        posteriors = job.get_posterior_samples()
+        just_z = [post[0] for post in posteriors]
+        hist   = plt.hist(just_z, bins = int(np.sqrt(len(just_z))))
+        z   = hist[1]
+        occ = hist[0]
+        y   = np.zeros(len(occ))
+        for i in range(len(z)-1):
+            y[i] = (z[i+1]+z[i])/2.
+        M.p_func = interpolate.interp1d(y, occ, kind = 'cubic', fill_value = 0., bounds_error = False)
+        prob = M.catalog['zsp2MPZ'].apply(M.p_func)
+        M.catalog['p'] = prob
+        M.catalog = M.catalog.sort_values('p', ascending = False)
+        print('Galaxies:')
+        print(M.catalog)
+        plt.xlabel('ra')
+        plt.ylabel('dec')
+        plt.xlim([min(M.catalog['RAJ2000'])-0.1, max(M.catalog['RAJ2000'])+0.1])
+        plt.ylim([min(M.catalog['DEJ2000'])-0.1, max(M.catalog['DEJ2000'])+0.1])
+        S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['p'], marker = '+')
+        bar = plt.colorbar(S)
+        bar.set_label('p')
+        plt.savefig('prob.png')
+
+
 if __name__ == '__main__':
-    Gal_cat = GalInABox([190,200],[-22,-17], u.deg, u.deg, catalog='GLADE')#[::100]
+
+    Gal_cat = GalInABox([190,200],[-26,-20], u.deg, u.deg, catalog='GLADE')#[::100]
     omega = lal.CreateCosmologicalParameters(0.7,0.3,0.7,-1.,0.,0.)
     M = ranking(Gal_cat, omega)
-    M.dropgal(nsigma = 6)
-    job = cpnest.CPNest(M, verbose=2, nthreads=4, nlive=1000, maxmcmc=1000)
-    job.run()
-    posteriors = job.get_posterior_samples()
-    just_z = [post[0] for post in posteriors]
-    hist   = plt.hist(just_z, bins = int(np.sqrt(len(just_z))))
-    z   = hist[1]
-    occ = hist[0]
-    y   = np.zeros(len(occ))
-    for i in range(len(z)-1):
-        y[i] = (z[i+1]+z[i])/2.
-    p_func = interpolate.interp1d(y, occ, kind = 'cubic', fill_value="extrapolate")
-    #
-    # app = np.linspace(min(y), max(y), 1000)
-    #
-    # plt.plot(app, p_func(app), marker = '')
-    # plt.savefig('z_post.png')
-
-    prob = M.catalog['z'].apply(p_func)
-    M.catalog['p'] = prob
-    M.catalog.sort_values('p')
-    print('Galaxies:')
-    print(M.catalog)
-
-    plt.xlabel('ra')
-    plt.ylabel('dec')
-    plt.xlim([min(M.catalog['RAJ2000'])-0.1, max(M.catalog['RAJ2000'])+0.1])
-    plt.ylim([min(M.catalog['DEJ2000'])-0.1, max(M.catalog['DEJ2000'])+0.1])
-    S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['p'], marker = '+')
-    bar = plt.colorbar(S)
-    bar.set_label('p')
-    plt.savefig('prob.png')
+    M.run()
