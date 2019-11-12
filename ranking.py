@@ -15,6 +15,7 @@ import lal
 from scipy import interpolate
 from scipy.special import logsumexp
 import cpnest, cpnest.model
+from scipy.stats import gaussian_kde
 
 '''
 Given a GW observation with its posteriors on position and LD, this module
@@ -93,7 +94,7 @@ def GalInABox(ra, dec, ra_unit, dec_unit, catalog = 'GLADE2', all = False):
     if all:
         v = Vizier()
     else:
-        v = Vizier(columns = ['RAJ2000', 'DEJ2000', 'zsp2MPZ', 'GWGC'])
+        v = Vizier(columns = ['RAJ2000', 'DEJ2000', 'zsp2MPZ', 'GWGC', 'BmagHyp', 'ImagHyp', 'Kmag2', 'Jmag2'])
 
     v.ROW_LIMIT = 99999999
     ra     = np.array(ra)
@@ -203,18 +204,10 @@ class ranking(cpnest.model.Model):
         self.dropgal(nsigma = 6)
         job = cpnest.CPNest(self, verbose=1, nthreads=4, nlive=1000, maxmcmc=1000)
         job.run()
-        posteriors = job.get_posterior_samples()
+        posteriors = job.get_posterior_samples(filename = 'posteriors.txt')
         just_z = [post[0] for post in posteriors]
-        hist   = plt.hist(just_z, bins = int(np.sqrt(len(just_z))), density = True, stacked = True)
-        z   = hist[1]
-        occ = hist[0]
-        y   = np.zeros(len(occ))
-        binwidth = z[1]-z[0]
-        for i in range(len(z)-1):
-            binwidth = z[i+1]-z[i]
-            y[i] = (z[i+1]+z[i])/2.
-        M.p_func = interpolate.interp1d(y, occ, kind = 'cubic', fill_value = 0., bounds_error = False)
-        prob = M.catalog['zsp2MPZ'].apply(M.p_func)
+        M.pdfz = gaussian_kde(just_z)
+        prob = M.catalog['zsp2MPZ'].apply(M.pdfz)
         M.catalog['p'] = prob
         M.catalog = M.catalog.sort_values('p', ascending = False)
         print('Galaxies:')
@@ -234,4 +227,28 @@ if __name__ == '__main__':
     Gal_cat = GalInABox([190,200],[-26,-20], u.deg, u.deg, catalog='GLADE')#[::100]
     omega = lal.CreateCosmologicalParameters(0.7,0.3,0.7,-1.,0.,0.)
     M = ranking(Gal_cat, omega)
-    M.run()
+    M.dropgal(nsigma = 6)
+    print(M.catalog)
+    # M.run()
+    posteriors = np.genfromtxt('posterior.dat', names = True)
+    M.pdfz = gaussian_kde(posteriors['zgw'])
+    prob = M.catalog['zsp2MPZ'].apply(M.pdfz)
+    M.catalog['p'] = prob
+    M.catalog = M.catalog.sort_values('p', ascending = False)
+    print('Galaxies:')
+    print(M.catalog)
+    plt.xlabel('ra')
+    plt.ylabel('dec')
+    plt.xlim([min(M.catalog['RAJ2000'])-0.1, max(M.catalog['RAJ2000'])+0.1])
+    plt.ylim([min(M.catalog['DEJ2000'])-0.1, max(M.catalog['DEJ2000'])+0.1])
+    S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['p'], marker = '+')
+    bar = plt.colorbar(S)
+    bar.set_label('p')
+    plt.savefig('prob.png')
+
+    plt.figure(2)
+    S = plt.scatter((M.catalog['BmagHyp']-M.catalog['ImagHyp']),(M.catalog['Jmag2']-M.catalog['Kmag2']), c = M.catalog['p'])
+    plt.colorbar(S)
+    plt.xlabel('B-I')
+    plt.ylabel('J-K')
+    plt.savefig('colorplot.pdf', bbox_inches='tight')
