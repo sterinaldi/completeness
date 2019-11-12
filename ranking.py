@@ -4,7 +4,10 @@
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 
+import json
+
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 
 import numpy as np
 import pandas as pd
@@ -16,6 +19,8 @@ from scipy import interpolate
 from scipy.special import logsumexp
 import cpnest, cpnest.model
 from scipy.stats import gaussian_kde
+
+from sklearn.mixture import GaussianMixture
 
 '''
 Given a GW observation with its posteriors on position and LD, this module
@@ -33,7 +38,7 @@ apart from redshift, where proper motion has to be taken into account.
 '''
 
 DL=39.4
-dDL=3.94
+dDL=39.4
 m_threshold = 19.0
 
 GW = SkyCoord(ra = '13h07m05.49s', dec = '-23d23m02.0s',
@@ -112,6 +117,42 @@ def GalInABox(ra, dec, ra_unit, dec_unit, catalog = 'GLADE2', all = False):
     print('where?')
     print(data.dropna())
     return data.dropna()
+
+def get_samples(filename, names = ['ra','dec','luminosity_distance']):
+    with open(filename, 'r') as f:
+        data = json.load(f)
+
+    post = np.array(data['posterior_samples']['SEOBNRv4pHM']['samples'])
+    keys = data['posterior_samples']['SEOBNRv4pHM']['parameter_names']
+
+    samples = {}
+
+    for name in names:
+        index  = keys.index(name)
+        samples[name] = post[:,index]
+
+    return samples
+
+def pos_posterior(ra_s, dec_s, number = 2):
+    func = GaussianMixture(n_components = number, covariance_type = 'full')
+    samples = []
+    for x,y in zip(ra_s, dec_s):
+        samples.append(np.array([x,y]))
+    func.mean_init = [[0.23,-0.44],[0.4,-0.55]]
+    func.fit_predict(samples)
+    return func
+
+def show_gaussian_mixture(ra_s, dec_s, mixture):
+    x = np.linspace(min(ra_s), max(ra_s))
+    y = np.linspace(min(dec_s), max(dec_s))
+    X, Y = np.meshgrid(x,y)
+    XX = np.array([X.ravel(), Y.ravel()]).T
+    Z = -mixture.score_samples(XX)
+    Z = Z.reshape(X.shape)
+    CS = plt.contour(X, Y, Z, norm=LogNorm(vmin=1.0, vmax=1000.0),levels=np.logspace(0, 3, 10))
+    CB = plt.colorbar(CS, shrink=0.8, extend='both')
+    plt.scatter(ra_s,dec_s, 0.8)
+    plt.show()
 
 def Galaxies95(boundaries, u_ra = u.rad, u_dec = u.rad, catalog = 'glade2'):
     """
@@ -204,7 +245,7 @@ class ranking(cpnest.model.Model):
         self.dropgal(nsigma = 6)
         job = cpnest.CPNest(self, verbose=1, nthreads=4, nlive=1000, maxmcmc=1000)
         job.run()
-        posteriors = job.get_posterior_samples(filename = 'posteriors.txt')
+        posteriors = job.get_posterior_samples(filename = 'posteriors.dat')
         just_z = [post[0] for post in posteriors]
         M.pdfz = gaussian_kde(just_z)
         prob = M.catalog['zsp2MPZ'].apply(M.pdfz)
@@ -222,14 +263,21 @@ class ranking(cpnest.model.Model):
         plt.savefig('prob.png')
 
 
+
 if __name__ == '__main__':
 
-    Gal_cat = GalInABox([190,200],[-26,-20], u.deg, u.deg, catalog='GLADE')#[::100]
+    samples = get_samples('posterior_samples.json')
+    test = pos_posterior(samples['ra'],samples['dec'], number = 1)
+    # show_gaussian_mixture(samples['ra'], samples['dec'], test)
+
+    Gal_cat = GalInABox([0.10,0.30],[-0.35,-0.55], u.rad, u.rad, catalog='GLADE')#[::100]
     omega = lal.CreateCosmologicalParameters(0.7,0.3,0.7,-1.,0.,0.)
     M = ranking(Gal_cat, omega)
     M.dropgal(nsigma = 6)
     print(M.catalog)
-    # M.run()
+    RUN = False
+    if RUN:
+        M.run()
     posteriors = np.genfromtxt('posterior.dat', names = True)
     M.pdfz = gaussian_kde(posteriors['zgw'])
     prob = M.catalog['zsp2MPZ'].apply(M.pdfz)
@@ -252,3 +300,16 @@ if __name__ == '__main__':
     plt.xlabel('B-I')
     plt.ylabel('J-K')
     plt.savefig('colorplot.pdf', bbox_inches='tight')
+
+    probs = []
+    for ra, dec in zip(M.catalog['RAJ2000'], M.catalog['DEJ2000']):
+        probs.append(np.exp(test.score_samples([[np.deg2rad(ra),np.deg2rad(dec)]]))[0])
+
+    M.catalog['ppos'] = np.array(probs)
+
+    M.catalog['ppos'] = M.catalog[M.catalog['ppos'] > 100] # empirico! 
+    plt.figure(3)
+
+    S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['ppos'])
+    plt.colorbar(S)
+    plt.savefig('positionsprob.pdf', bbox_inches = 'tight')
