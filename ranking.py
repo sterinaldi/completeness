@@ -36,13 +36,7 @@ p(X|A,O) = delta(alpha_i-alpha_w)delta(delta_i-delta_w)delta(z_i-z_w)delta(LD-f(
 given that we're making the assumption that the galaxy parameters are exactly known
 apart from redshift, where proper motion has to be taken into account.
 '''
-
-DL=39.4
-dDL=39.4
 m_threshold = 19.0
-
-GW = SkyCoord(ra = '13h07m05.49s', dec = '-23d23m02.0s',
-            unit=('hourangle','deg'))
 
 def Gaussexp(x, mu, sigma):
     return -(x-mu)**2/(2*sigma**2)-2.0*np.pi*sigma
@@ -113,13 +107,10 @@ def GalInABox(ra, dec, ra_unit, dec_unit, catalog = 'GLADE2', all = False):
     # for tablei in table:
     #     data = data.append(tablei.to_pandas(), ignore_index = True)
     data = data.append(table[0].to_pandas())
-    print(data)
-    print('where?')
-    print(data.dropna())
     return data.dropna()
 
-def get_samples(filename, names = ['ra','dec','luminosity_distance']):
-    with open(filename, 'r') as f:
+def get_samples(file, names = ['ra','dec','luminosity_distance']):
+    with open(file, 'r') as f:
         data = json.load(f)
 
     post = np.array(data['posterior_samples']['SEOBNRv4pHM']['samples'])
@@ -154,66 +145,9 @@ def show_gaussian_mixture(ra_s, dec_s, mixture):
     plt.scatter(ra_s,dec_s, 0.8)
     plt.show()
 
-def Galaxies95(boundaries, u_ra = u.rad, u_dec = u.rad, catalog = 'glade2'):
-    """
-    Dato il contorno (al 95%?) della possibile regione di provenienza di una GW
-    restituisce tutte le galassie in un catalogo a scelta che si trovano all'interno
-    della suddetta regione.
+def LD_posterior(LD_s):
+    return gaussian_kde(LD_s)
 
-    NON ANCORA UTILIZZABILE!!!
-
-    Parameters
-    ----------
-    boundaries: unknown.
-        Regione di cielo di forma qualunque proveniente dalla posterior su RA-DEC.
-
-    u_ra, u_dec: astropy.units.core.Unit, optional.
-        Unità di misura delle coordinate RA-DEC.
-
-    catalog: string, optional.
-        Catalogo dal quale estrarre i dati.
-        Default: GLADE2 (pensato per coll. LIGO-Virgo).
-
-    Returns
-    -------
-    df: Pandas DataFrame
-        DataFrame Pandas contenente gli oggetti selezionati dal catalogo.
-    """
-
-    ra  = [max(ra_boundaries), min(ra_boundaries)]
-    dec = [max(dec_boundaries), min(dec_boundaries)]
-
-
-    df_all     = GalInABox(ra, dec, u_ra, u_dec, catalog)
-# TODO: Scrivere una funzione che data la coppia ra-dec controlli che sia dentro la banana
-    clean_data = df_all[df_all[['RAJ2000', 'DEJ2000']].apply(check_in_95, args = (boundaries,)) == True]
-
-    return clean_data
-
-def check_in_95(boundaries, RA, DEC):
-    """
-    Completamente da scrivere: decidere se un punto è dentro o fuori BOUNDARIES
-    [problema: non so in che formato è BOUNDARIES]
-    Deve ritornare un Booleano.
-
-    Parameters
-    ----------
-    boundaries: unknown
-        Regione di cielo di forma qualunque proveniente dalla posterior su RA-DEC.
-
-    RA, DEC: float
-        Coordinate della galassia (o dell'oggetto) di interesse.
-
-    Returns
-    -------
-    flag: boolean
-        True se l'oggetto è dentro la regione di cielo considerata, False altrimenti.
-
-    """
-    if DEC > 1:
-        return True
-    else:
-        return False
 
 class ranking(cpnest.model.Model):
 
@@ -225,34 +159,13 @@ class ranking(cpnest.model.Model):
         self.omega   = omega
         self.catalog = catalog
 
-    def dropgal(self, nsigma = 4):
+    def dropgal(self):
         for i in self.catalog.index:
-            if (self.catalog['zsp2MPZ'][i] > RedshiftCalculation(DL+nsigma*dDL, self.omega)) or (self.catalog['zsp2MPZ'][i] < RedshiftCalculation(DL-nsigma*dDL, self.omega)):
+            if self.pLD(lal.LuminosityDistance(self.omega, self.catalog['zsp2MPZ'][i])) < 0.0001:
                 self.catalog = self.catalog.drop(i)
 
-    def log_prior(self,x):
-        if not(np.isfinite(super(ranking, self).log_prior(x))):
-            return -np.inf
-        return 0.
-
-    def log_likelihood(self, x):
-        logL = 0.
-        zgw = x['zgw']
-        logL = logsumexp([Gaussexp(lal.LuminosityDistance(self.omega, zgi), DL, dDL)+Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(np.radians(rai), GW.ra.rad, 2.0)+Gaussexp(np.pi/2.0-np.radians(di), GW.dec.rad, 2.0) for zgi,rai,di in zip(self.catalog['zsp2MPZ'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
-        return logL
-
-    def run(self):
-        self.dropgal(nsigma = 6)
-        job = cpnest.CPNest(self, verbose=1, nthreads=4, nlive=1000, maxmcmc=1000)
-        job.run()
-        posteriors = job.get_posterior_samples(filename = 'posteriors.dat')
-        just_z = [post[0] for post in posteriors]
-        M.pdfz = gaussian_kde(just_z)
-        prob = M.catalog['zsp2MPZ'].apply(M.pdfz)
-        M.catalog['p'] = prob
-        M.catalog = M.catalog.sort_values('p', ascending = False)
-        print('Galaxies:')
-        print(M.catalog)
+    def plot_outputs(self):
+        plt.figure(1)
         plt.xlabel('ra')
         plt.ylabel('dec')
         plt.xlim([min(M.catalog['RAJ2000'])-0.1, max(M.catalog['RAJ2000'])+0.1])
@@ -262,54 +175,73 @@ class ranking(cpnest.model.Model):
         bar.set_label('p')
         plt.savefig('prob.png')
 
+        plt.figure(2)
+        S = plt.scatter((M.catalog['BmagHyp']-M.catalog['ImagHyp']),(M.catalog['Jmag2']-M.catalog['Kmag2']), c = M.catalog['p'])
+        plt.colorbar(S)
+        plt.xlabel('B-I')
+        plt.ylabel('J-K')
+        plt.savefig('colorplot.pdf', bbox_inches='tight')
+
+        plt.figure(3)
+        S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['ppos'], marker = '+')
+        plt.colorbar(S)
+        plt.savefig('positionsprob.pdf', bbox_inches = 'tight')
+
+
+    def log_prior(self,x):
+        if not(np.isfinite(super(ranking, self).log_prior(x))):
+            return -np.inf
+        return 0.
+
+    def log_likelihood(self, x):
+        logL = 0.
+        zgw = x['zgw']
+        # Manca da correggere per il moto proprio (assunto, per ora, gaussiano con errore del 10%)
+        # logL = logsumexp([Gaussexp(lal.LuminosityDistance(self.omega, zgi), DL, dDL)+Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(np.radians(rai), GW.ra.rad, 2.0)+Gaussexp(np.pi/2.0-np.radians(di), GW.dec.rad, 2.0) for zgi,rai,di in zip(self.catalog['zsp2MPZ'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
+        Lh = np.array([gaussian(zgw, zgi, zgi/10.0)*M.pLD(lal.LuminosityDistance(self.omega, zgi))*np.exp(M.p_pos.score_samples([[np.deg2rad(rai),np.deg2rad(di)]])[0])for zgi,rai,di in zip(self.catalog['zsp2MPZ'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
+        logL = np.log(Lh.sum())
+        return logL
+
+    def run(self, json_file, show_output = False, run_sampling = True):
+
+        # calcolo posteriors GW
+        samples = get_samples(file = json_file)
+        M.pLD = LD_posterior(samples['luminosity_distance'])
+        M.p_pos = pos_posterior(samples['ra'],samples['dec'], number = 1)
+        probs = []
+        for ra, dec in zip(M.catalog['RAJ2000'], M.catalog['DEJ2000']):
+            probs.append(np.exp(M.p_pos.score_samples([[np.deg2rad(ra),np.deg2rad(dec)]]))[0]) # si riesce ad ottimizzare?
+        M.catalog['ppos'] = np.array(probs)
+
+        # Levo le galassie troppo fuori dal posterior
+        M.catalog = M.catalog[M.catalog['ppos'] > 50] # empirico!
+        # Levo le galassie fuori dal range di distanza
+        self.dropgal()
+        # run
+        job = cpnest.CPNest(self, verbose=1, nthreads=4, nlive=1000, maxmcmc=1000)
+        if run_sampling:
+            job.run()
+            posteriors = job.get_posterior_samples(filename = 'posteriors_z.dat')
+
+        # Calcolo posterior su z
+        posteriors = np.genfromtxt('posteriors_z.dat', names = True)
+        just_z = [post[0] for post in posteriors]
+        M.pdfz = gaussian_kde(just_z)
+        # Calcolo probabilità e ordino le galassie
+        prob = M.catalog['zsp2MPZ'].apply(M.pdfz)
+        M.catalog['p'] = prob
+        M.catalog = M.catalog.sort_values('p', ascending = False)
+        print('Galaxies:')
+        print(M.catalog)
+        if show_output:
+            M.plot_outputs()
 
 
 if __name__ == '__main__':
 
-    samples = get_samples('posterior_samples.json')
-    test = pos_posterior(samples['ra'],samples['dec'], number = 1)
     # show_gaussian_mixture(samples['ra'], samples['dec'], test)
-
-    Gal_cat = GalInABox([0.10,0.30],[-0.35,-0.55], u.rad, u.rad, catalog='GLADE')#[::100]
+    json_pos = 'posterior_samples.json'
+    Gal_cat = GalInABox([0.05,0.5],[-0.10,-0.75], u.rad, u.rad, catalog='GLADE')#[::100]
     omega = lal.CreateCosmologicalParameters(0.7,0.3,0.7,-1.,0.,0.)
     M = ranking(Gal_cat, omega)
-    M.dropgal(nsigma = 6)
-    print(M.catalog)
-    RUN = False
-    if RUN:
-        M.run()
-    posteriors = np.genfromtxt('posterior.dat', names = True)
-    M.pdfz = gaussian_kde(posteriors['zgw'])
-    prob = M.catalog['zsp2MPZ'].apply(M.pdfz)
-    M.catalog['p'] = prob
-    M.catalog = M.catalog.sort_values('p', ascending = False)
-    print('Galaxies:')
-    print(M.catalog)
-    plt.xlabel('ra')
-    plt.ylabel('dec')
-    plt.xlim([min(M.catalog['RAJ2000'])-0.1, max(M.catalog['RAJ2000'])+0.1])
-    plt.ylim([min(M.catalog['DEJ2000'])-0.1, max(M.catalog['DEJ2000'])+0.1])
-    S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['p'], marker = '+')
-    bar = plt.colorbar(S)
-    bar.set_label('p')
-    plt.savefig('prob.png')
-
-    plt.figure(2)
-    S = plt.scatter((M.catalog['BmagHyp']-M.catalog['ImagHyp']),(M.catalog['Jmag2']-M.catalog['Kmag2']), c = M.catalog['p'])
-    plt.colorbar(S)
-    plt.xlabel('B-I')
-    plt.ylabel('J-K')
-    plt.savefig('colorplot.pdf', bbox_inches='tight')
-
-    probs = []
-    for ra, dec in zip(M.catalog['RAJ2000'], M.catalog['DEJ2000']):
-        probs.append(np.exp(test.score_samples([[np.deg2rad(ra),np.deg2rad(dec)]]))[0])
-
-    M.catalog['ppos'] = np.array(probs)
-
-    M.catalog['ppos'] = M.catalog[M.catalog['ppos'] > 100] # empirico! 
-    plt.figure(3)
-
-    S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['ppos'])
-    plt.colorbar(S)
-    plt.savefig('positionsprob.pdf', bbox_inches = 'tight')
+    M.run(json_file = json_pos, run_sampling = True, show_output = True)
