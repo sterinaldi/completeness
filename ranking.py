@@ -99,10 +99,11 @@ def GalInABox(ra, dec, ra_unit, dec_unit, catalog = 'GLADE2', all = False):
     ra     = np.array(ra)
     dec    = np.array(dec)
     center = SkyCoord(ra.mean(), dec.mean(), unit = (ra_unit, dec_unit))
-    width  = (ra.max()-ra.min())/2.*ra_unit
-    height = (dec.max()-dec.min())/2.*dec_unit
+    width  = abs(ra.max()-ra.min())/2.*ra_unit
+    height = abs(dec.max()-dec.min())/2.*dec_unit
 
-    table = v.query_region(center, width = width, height = height, catalog = catalog)
+
+    table = v.query_region(center, radius = 1*u.deg, catalog = catalog) # width = width, height = height, catalog = catalog)
     data  = pd.DataFrame()
     # for tablei in table:
     #     data = data.append(tablei.to_pandas(), ignore_index = True)
@@ -123,6 +124,7 @@ def get_samples(file, names = ['ra','dec','luminosity_distance']):
         samples[name] = post[:,index]
 
     return samples
+
 
 def pos_posterior(ra_s, dec_s, number = 2):
     func = GaussianMixture(n_components = number, covariance_type = 'full')
@@ -151,17 +153,29 @@ def LD_posterior(LD_s):
 
 class ranking(cpnest.model.Model):
 
-    def __init__(self, catalog, omega):
+    def __init__(self, omega):
         self.names=['zgw']
-        self.bounds=[[0.001,0.015]]
+        self.bounds=[[0.01,0.04]]
 
 # 0.7,0.5,0.5,-1.,0.,0.
         self.omega   = omega
-        self.catalog = catalog
+
+    def GalInABox2(self, catalog):
+        v = Vizier(columns = ['RAJ2000', 'DEJ2000', 'zsp2MPZ', 'GWGC', 'BmagHyp', 'ImagHyp', 'Kmag2', 'Jmag2'])
+        v.ROW_LIMIT = 99999999
+        center = SkyCoord(M.p_pos.means_[0][0], M.p_pos.means_[0][1], unit = (u.rad, u.rad))
+        raggio = np.sqrt(np.diag(M.p_pos.covariances_[0])).max()
+        table = v.query_region(center, radius = 5*raggio*u.rad, catalog = catalog) # width = width, height = height, catalog = catalog)
+        data  = pd.DataFrame()
+        # for tablei in table:
+        #     data = data.append(tablei.to_pandas(), ignore_index = True)
+        data = data.append(table[0].to_pandas())
+        return data.dropna()
+
 
     def dropgal(self):
         for i in self.catalog.index:
-            if self.pLD(lal.LuminosityDistance(self.omega, self.catalog['zsp2MPZ'][i])) < 0.0001:
+            if self.pLD(lal.LuminosityDistance(self.omega, self.catalog['zsp2MPZ'][i])) < 0.00001:
                 self.catalog = self.catalog.drop(i)
 
     def plot_outputs(self):
@@ -206,42 +220,47 @@ class ranking(cpnest.model.Model):
 
         # calcolo posteriors GW
         samples = get_samples(file = json_file)
-        M.pLD = LD_posterior(samples['luminosity_distance'])
-        M.p_pos = pos_posterior(samples['ra'],samples['dec'], number = 1)
+        self.pLD = gaussian_kde(samples['luminosity_distance'])
+        self.p_pos = pos_posterior(samples['ra'],samples['dec'], number = 1)
         probs = []
-        for ra, dec in zip(M.catalog['RAJ2000'], M.catalog['DEJ2000']):
-            probs.append(np.exp(M.p_pos.score_samples([[np.deg2rad(ra),np.deg2rad(dec)]]))[0]) # si riesce ad ottimizzare?
-        M.catalog['ppos'] = np.array(probs)
+        self.catalog = self.GalInABox2(catalog='GLADE')
+        for ra, dec in zip(self.catalog['RAJ2000'], self.catalog['DEJ2000']):
+            probs.append(np.exp(self.p_pos.score_samples([[np.deg2rad(ra),np.deg2rad(dec)]]))[0]) # si riesce ad ottimizzare?
+        self.catalog['ppos'] = np.array(probs)
 
         # Levo le galassie troppo fuori dal posterior
-        M.catalog = M.catalog[M.catalog['ppos'] > 50] # empirico!
+        self.catalog = self.catalog[self.catalog['ppos'] > 50] # empirico!
         # Levo le galassie fuori dal range di distanza
         self.dropgal()
         # run
         job = cpnest.CPNest(self, verbose=1, nthreads=4, nlive=1000, maxmcmc=1000)
         if run_sampling:
             job.run()
-            posteriors = job.get_posterior_samples(filename = 'posteriors_z.dat')
-
+            posteriors = job.get_posterior_samples(filename = 'posterior.dat')
         # Calcolo posterior su z
-        posteriors = np.genfromtxt('posteriors_z.dat', names = True)
+        posteriors = np.genfromtxt('posterior.dat', names = True)
         just_z = [post[0] for post in posteriors]
-        M.pdfz = gaussian_kde(just_z)
-        # Calcolo probabilità e ordino le galassie
-        prob = M.catalog['zsp2MPZ'].apply(M.pdfz)
-        M.catalog['p'] = prob
-        M.catalog = M.catalog.sort_values('p', ascending = False)
-        print('Galaxies:')
-        print(M.catalog)
-        if show_output:
-            M.plot_outputs()
+        self.pdfz = gaussian_kde(just_z)
 
+        # Calcolo probabilità e ordino le galassie
+        prob = self.catalog['zsp2MPZ'].apply(self.pdfz)
+        self.catalog['p'] = prob
+        self.catalog = self.catalog.sort_values('p', ascending = False)
+        print('Galaxies:')
+        print(self.catalog)
+        if show_output:
+            self.plot_outputs()
+
+        app = np.linspace(0.01,0.05, 1000)
+        plt.figure(4)
+        plt.plot(app, self.pdfz(app))
+        plt.savefig('pdfz.pdf')
 
 if __name__ == '__main__':
 
     # show_gaussian_mixture(samples['ra'], samples['dec'], test)
     json_pos = 'posterior_samples.json'
-    Gal_cat = GalInABox([0.05,0.5],[-0.10,-0.75], u.rad, u.rad, catalog='GLADE')#[::100]
+    # Gal_cat = GalInABox([13,15],[-25,-26], u.deg, u.deg, catalog='GLADE')#[::100]
     omega = lal.CreateCosmologicalParameters(0.7,0.3,0.7,-1.,0.,0.)
-    M = ranking(Gal_cat, omega)
+    M = ranking(omega)
     M.run(json_file = json_pos, run_sampling = True, show_output = True)
