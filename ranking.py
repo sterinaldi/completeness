@@ -155,7 +155,7 @@ class ranking(cpnest.model.Model):
 
     def __init__(self, omega):
         self.names=['zgw']
-        self.bounds=[[0.01,0.04]]
+        self.bounds=[[0.025,0.07]]
 
 # 0.7,0.5,0.5,-1.,0.,0.
         self.omega   = omega
@@ -251,7 +251,7 @@ class ranking(cpnest.model.Model):
         if show_output:
             self.plot_outputs()
 
-        app = np.linspace(0.01,0.05, 1000)
+        app = np.linspace(0.01,0.1, 1000)
         plt.figure(4)
         plt.plot(app, self.pdfz(app))
         plt.savefig('pdfz.pdf')
@@ -263,4 +263,4 @@ if __name__ == '__main__':
     # Gal_cat = GalInABox([13,15],[-25,-26], u.deg, u.deg, catalog='GLADE')#[::100]
     omega = lal.CreateCosmologicalParameters(0.7,0.3,0.7,-1.,0.,0.)
     M = ranking(omega)
-    M.run(json_file = json_pos, run_sampling = True, show_output = True)
+    M.run(json_file = json_pos, run_sampling = False, show_output = True)
