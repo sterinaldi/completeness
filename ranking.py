@@ -93,7 +93,7 @@ def GalInABox(ra, dec, ra_unit, dec_unit, catalog = 'GLADE2', all = False):
     if all:
         v = Vizier()
     else:
-        v = Vizier(columns = ['RAJ2000', 'DEJ2000', 'zsp2MPZ', 'GWGC', 'BmagHyp', 'ImagHyp', 'Kmag2', 'Jmag2'])
+        v = Vizier(columns = ['RAJ2000', 'DEJ2000', 'z', 'GWGC', 'BmagHyp', 'ImagHyp', 'Kmag2', 'Jmag2'])
 
     v.ROW_LIMIT = 99999999
     ra     = np.array(ra)
@@ -161,7 +161,7 @@ class ranking(cpnest.model.Model):
         self.omega   = omega
 
     def GalInABox2(self, catalog):
-        v = Vizier(columns = ['RAJ2000', 'DEJ2000', 'zsp2MPZ', 'GWGC', 'BmagHyp', 'ImagHyp', 'Kmag2', 'Jmag2'])
+        v = Vizier(columns = ['RAJ2000', 'DEJ2000', 'z'])#, 'GWGC', 'BmagHyp', 'ImagHyp', 'Kmag2', 'Jmag2'])
         v.ROW_LIMIT = 99999999
         center = SkyCoord(M.p_pos.means_[0][0], M.p_pos.means_[0][1], unit = (u.rad, u.rad))
         raggio = np.sqrt(np.diag(M.p_pos.covariances_[0])).max()
@@ -169,13 +169,13 @@ class ranking(cpnest.model.Model):
         data  = pd.DataFrame()
         # for tablei in table:
         #     data = data.append(tablei.to_pandas(), ignore_index = True)
-        data = data.append(table[0].to_pandas())
+        data = data.append(table[1].to_pandas())
         return data.dropna()
 
 
     def dropgal(self):
         for i in self.catalog.index:
-            if self.pLD(lal.LuminosityDistance(self.omega, self.catalog['zsp2MPZ'][i])) < 0.00001:
+            if self.pLD(lal.LuminosityDistance(self.omega, self.catalog['z'][i])) < 0.00001:
                 self.catalog = self.catalog.drop(i)
 
     def plot_outputs(self):
@@ -189,12 +189,12 @@ class ranking(cpnest.model.Model):
         bar.set_label('p')
         plt.savefig('prob.png')
 
-        plt.figure(2)
-        S = plt.scatter((M.catalog['BmagHyp']-M.catalog['ImagHyp']),(M.catalog['Jmag2']-M.catalog['Kmag2']), c = M.catalog['p'])
-        plt.colorbar(S)
-        plt.xlabel('B-I')
-        plt.ylabel('J-K')
-        plt.savefig('colorplot.pdf', bbox_inches='tight')
+        # plt.figure(2)
+        # S = plt.scatter((M.catalog['BmagHyp']-M.catalog['ImagHyp']),(M.catalog['Jmag2']-M.catalog['Kmag2']), c = M.catalog['p'])
+        # plt.colorbar(S)
+        # plt.xlabel('B-I')
+        # plt.ylabel('J-K')
+        # plt.savefig('colorplot.pdf', bbox_inches='tight')
 
         plt.figure(3)
         S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['ppos'], marker = '+')
@@ -211,8 +211,8 @@ class ranking(cpnest.model.Model):
         logL = 0.
         zgw = x['zgw']
         # Manca da correggere per il moto proprio (assunto, per ora, gaussiano con errore del 10%)
-        # logL = logsumexp([Gaussexp(lal.LuminosityDistance(self.omega, zgi), DL, dDL)+Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(np.radians(rai), GW.ra.rad, 2.0)+Gaussexp(np.pi/2.0-np.radians(di), GW.dec.rad, 2.0) for zgi,rai,di in zip(self.catalog['zsp2MPZ'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
-        Lh = np.array([gaussian(zgw, zgi, zgi/10.0)*M.pLD(lal.LuminosityDistance(self.omega, zgi))*np.exp(M.p_pos.score_samples([[np.deg2rad(rai),np.deg2rad(di)]])[0])for zgi,rai,di in zip(self.catalog['zsp2MPZ'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
+        # logL = logsumexp([Gaussexp(lal.LuminosityDistance(self.omega, zgi), DL, dDL)+Gaussexp(zgw, zgi, zgi/10.0)+Gaussexp(np.radians(rai), GW.ra.rad, 2.0)+Gaussexp(np.pi/2.0-np.radians(di), GW.dec.rad, 2.0) for zgi,rai,di in zip(self.catalog['z'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
+        Lh = np.array([gaussian(zgw, zgi, zgi/10.0)*M.pLD(lal.LuminosityDistance(self.omega, zgi))*np.exp(M.p_pos.score_samples([[np.deg2rad(rai),np.deg2rad(di)]])[0])for zgi,rai,di in zip(self.catalog['z'],self.catalog['RAJ2000'],self.catalog['DEJ2000'])])
         logL = np.log(Lh.sum())
         return logL
 
@@ -233,7 +233,7 @@ class ranking(cpnest.model.Model):
         # Levo le galassie fuori dal range di distanza
         self.dropgal()
         # run
-        job = cpnest.CPNest(self, verbose=1, nthreads=4, nlive=1000, maxmcmc=1000)
+        job = cpnest.CPNest(self, verbose=1, nthreads=4, nlive=1000, maxmcmc=100)
         if run_sampling:
             job.run()
             posteriors = job.get_posterior_samples(filename = 'posterior.dat')
@@ -243,7 +243,9 @@ class ranking(cpnest.model.Model):
         self.pdfz = gaussian_kde(just_z)
 
         # Calcolo probabilità e ordino le galassie
-        prob = self.catalog['zsp2MPZ'].apply(self.pdfz)
+        prob = self.catalog['z'].apply(self.pdfz)
+        # Non mi piace per niente questa normalizzazione, ma tant'è...
+        prob = prob/np.sum(prob)
         self.catalog['p'] = prob
         self.catalog = self.catalog.sort_values('p', ascending = False)
         print('Galaxies:')
