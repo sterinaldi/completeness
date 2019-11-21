@@ -5,6 +5,8 @@ from astropy.coordinates import SkyCoord
 import astropy.units as u
 
 import json
+import h5py
+from os.path import splitext
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
@@ -111,19 +113,32 @@ def GalInABox(ra, dec, ra_unit, dec_unit, catalog = 'GLADE2', all = False):
     return data.dropna()
 
 def get_samples(file, names = ['ra','dec','luminosity_distance']):
-    with open(file, 'r') as f:
-        data = json.load(f)
-
-    post = np.array(data['posterior_samples']['SEOBNRv4pHM']['samples'])
-    keys = data['posterior_samples']['SEOBNRv4pHM']['parameter_names']
-
+    filename, ext = splitext(file)
     samples = {}
 
-    for name in names:
-        index  = keys.index(name)
-        samples[name] = post[:,index]
+    if ext == '.json':
+        with open(file, 'r') as f:
+            data = json.load(f)
 
-    return samples
+        post = np.array(data['posterior_samples']['SEOBNRv4pHM']['samples'])
+        keys = data['posterior_samples']['SEOBNRv4pHM']['parameter_names']
+
+        for name in names:
+            index  = keys.index(name)
+            samples[name] = post[:,index]
+
+        return samples
+        
+    if ext == '.hdf5';
+        f = h5py.File(file, 'r')
+        dati = f[list(f.keys())[2]] # 2 low spin posteriors, 0 high spin posteriors
+        h5names = ['right_ascension','declination','luminosity_distance_Mpc']
+
+        for name, nameh5 in zip(names, h5names):
+            samples[name] = dati[h5names]
+
+        return samples
+
 
 
 def pos_posterior(ra_s, dec_s, number = 2):
@@ -216,10 +231,10 @@ class ranking(cpnest.model.Model):
         logL = np.log(Lh.sum())
         return logL
 
-    def run(self, json_file, show_output = False, run_sampling = True):
+    def run(self, file, show_output = False, run_sampling = True):
 
         # calcolo posteriors GW
-        samples = get_samples(file = json_file)
+        samples = get_samples(file = file)
         self.pLD = gaussian_kde(samples['luminosity_distance'])
         self.p_pos = pos_posterior(samples['ra'],samples['dec'], number = 1)
         probs = []
@@ -265,4 +280,4 @@ if __name__ == '__main__':
     # Gal_cat = GalInABox([13,15],[-25,-26], u.deg, u.deg, catalog='GLADE')#[::100]
     omega = lal.CreateCosmologicalParameters(0.7,0.3,0.7,-1.,0.,0.)
     M = ranking(omega)
-    M.run(json_file = json_pos, run_sampling = False, show_output = True)
+    M.run(json_file = json_pos, run_sampling = True, show_output = True)
