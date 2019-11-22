@@ -128,14 +128,14 @@ def get_samples(file, names = ['ra','dec','luminosity_distance']):
             samples[name] = post[:,index]
 
         return samples
-        
-    if ext == '.hdf5';
+
+    if ext == '.hdf5':
         f = h5py.File(file, 'r')
         dati = f[list(f.keys())[2]] # 2 low spin posteriors, 0 high spin posteriors
         h5names = ['right_ascension','declination','luminosity_distance_Mpc']
 
         for name, nameh5 in zip(names, h5names):
-            samples[name] = dati[h5names]
+            samples[name] = dati[nameh5]
 
         return samples
 
@@ -146,7 +146,7 @@ def pos_posterior(ra_s, dec_s, number = 2):
     samples = []
     for x,y in zip(ra_s, dec_s):
         samples.append(np.array([x,y]))
-    func.mean_init = [[0.23,-0.44],[0.4,-0.55]]
+    #func.mean_init = [[0.23,-0.44],[0.4,-0.55]]
     func.fit_predict(samples)
     return func
 
@@ -168,11 +168,9 @@ def LD_posterior(LD_s):
 
 class ranking(cpnest.model.Model):
 
-    def __init__(self, omega):
+    def __init__(self, omega, z_bounds):
         self.names=['zgw']
-        self.bounds=[[0.025,0.07]]
-
-# 0.7,0.5,0.5,-1.,0.,0.
+        self.bounds=[z_bounds]
         self.omega   = omega
 
     def GalInABox2(self, catalog):
@@ -190,7 +188,7 @@ class ranking(cpnest.model.Model):
 
     def dropgal(self):
         for i in self.catalog.index:
-            if self.pLD(lal.LuminosityDistance(self.omega, self.catalog['z'][i])) < 0.00001:
+            if self.pLD(lal.LuminosityDistance(self.omega, self.catalog['z'][i])) < 0.0001:
                 self.catalog = self.catalog.drop(i)
 
     def plot_outputs(self):
@@ -202,20 +200,22 @@ class ranking(cpnest.model.Model):
         S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['p'], marker = '+')
         bar = plt.colorbar(S)
         bar.set_label('p')
-        plt.savefig('prob.png')
+        plt.savefig('prob.pdf', bbox_inches = 'tight')
 
-        # plt.figure(2)
-        # S = plt.scatter((M.catalog['BmagHyp']-M.catalog['ImagHyp']),(M.catalog['Jmag2']-M.catalog['Kmag2']), c = M.catalog['p'])
-        # plt.colorbar(S)
-        # plt.xlabel('B-I')
-        # plt.ylabel('J-K')
-        # plt.savefig('colorplot.pdf', bbox_inches='tight')
-
-        plt.figure(3)
+        plt.figure(2)
         S = plt.scatter(M.catalog['RAJ2000'], M.catalog['DEJ2000'], c = M.catalog['ppos'], marker = '+')
-        plt.colorbar(S)
+        bar = plt.colorbar(S)
+        bar.set_label('p')
+        plt.xlabel('ra')
+        plt.ylabel('dec')
         plt.savefig('positionsprob.pdf', bbox_inches = 'tight')
 
+        app = np.linspace(self.bounds[0][0],self.bounds[0][1], 1000)
+        plt.figure(3)
+        plt.plot(app, self.pdfz(app))
+        plt.xlabel('$z$')
+        plt.ylabel('$p(z)$')
+        plt.savefig('pdfz.pdf')
 
     def log_prior(self,x):
         if not(np.isfinite(super(ranking, self).log_prior(x))):
@@ -242,11 +242,10 @@ class ranking(cpnest.model.Model):
         for ra, dec in zip(self.catalog['RAJ2000'], self.catalog['DEJ2000']):
             probs.append(np.exp(self.p_pos.score_samples([[np.deg2rad(ra),np.deg2rad(dec)]]))[0]) # si riesce ad ottimizzare?
         self.catalog['ppos'] = np.array(probs)
-
         # Levo le galassie troppo fuori dal posterior
-        self.catalog = self.catalog[self.catalog['ppos'] > 50] # empirico!
+        self.catalog = self.catalog[self.catalog['ppos'] > 0.01] # empirico!
         # Levo le galassie fuori dal range di distanza
-        self.dropgal()
+        # self.dropgal()
         # run
         job = cpnest.CPNest(self, verbose=1, nthreads=4, nlive=1000, maxmcmc=100)
         if run_sampling:
@@ -259,25 +258,18 @@ class ranking(cpnest.model.Model):
 
         # Calcolo probabilità e ordino le galassie
         prob = self.catalog['z'].apply(self.pdfz)
-        # Non mi piace per niente questa normalizzazione, ma tant'è...
-        prob = prob/np.sum(prob)
+        prob = prob/prob.max()
         self.catalog['p'] = prob
         self.catalog = self.catalog.sort_values('p', ascending = False)
-        print('Galaxies:')
-        print(self.catalog)
+        self.catalog.to_csv('rank.txt', header=None, index=None, sep=' ', mode='a')
         if show_output:
             self.plot_outputs()
 
-        app = np.linspace(0.01,0.1, 1000)
-        plt.figure(4)
-        plt.plot(app, self.pdfz(app))
-        plt.savefig('pdfz.pdf')
-
 if __name__ == '__main__':
 
-    # show_gaussian_mixture(samples['ra'], samples['dec'], test)
-    json_pos = 'posterior_samples.json'
-    # Gal_cat = GalInABox([13,15],[-25,-26], u.deg, u.deg, catalog='GLADE')#[::100]
+    positions = 'posterior_samples.json'
+    # positions = 'GW170817_GWTC-1.hdf5'
+    z_bounds = [0.02,0.08]
     omega = lal.CreateCosmologicalParameters(0.7,0.3,0.7,-1.,0.,0.)
     M = ranking(omega)
-    M.run(json_file = json_pos, run_sampling = True, show_output = True)
+    M.run(file = positions, run_sampling = True, show_output = True, z_bounds)
