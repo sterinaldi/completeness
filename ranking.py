@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from astropy.coordinates import SkyCoord
-import astropy.units as u
+
 
 import json
 import h5py
@@ -15,6 +14,8 @@ import numpy as np
 import pandas as pd
 from astropy.coordinates import SkyCoord
 from astroquery.vizier import Vizier
+from astroquery.simbad import Simbad
+import astropy.units as u
 import lal
 
 from scipy import interpolate
@@ -217,6 +218,16 @@ class ranking(cpnest.model.Model):
         plt.ylabel('$p(z)$')
         plt.savefig('pdfz.pdf')
 
+    def get_names(self):
+        names = []
+        for ra, dec in zip(self.catalog['RAJ2000'], self.catalog['DEJ2000']):
+            table = Simbad.query_region(SkyCoord(ra*u.deg,dec*u.deg))
+            if table is None:
+                names.append('Not provided')
+            else:
+                names.append(table[0][0].decode('utf-8'))
+        self.catalog['names'] = names
+
     def log_prior(self,x):
         if not(np.isfinite(super(ranking, self).log_prior(x))):
             return -np.inf
@@ -245,7 +256,7 @@ class ranking(cpnest.model.Model):
         # Levo le galassie troppo fuori dal posterior
         self.catalog = self.catalog[self.catalog['ppos'] > 0.01] # empirico!
         # Levo le galassie fuori dal range di distanza
-        # self.dropgal()
+        self.dropgal()
         # run
         job = cpnest.CPNest(self, verbose=1, nthreads=4, nlive=1000, maxmcmc=100)
         if run_sampling:
@@ -261,7 +272,8 @@ class ranking(cpnest.model.Model):
         prob = prob/prob.max()
         self.catalog['p'] = prob
         self.catalog = self.catalog.sort_values('p', ascending = False)
-        self.catalog.to_csv('rank.txt', header=None, index=None, sep=' ', mode='a')
+        # self.get_names()
+        self.catalog.to_csv('rank.txt', header=True, index=None, sep=' ', mode='a')
         if show_output:
             self.plot_outputs()
 
@@ -271,5 +283,5 @@ if __name__ == '__main__':
     # positions = 'GW170817_GWTC-1.hdf5'
     z_bounds = [0.02,0.08]
     omega = lal.CreateCosmologicalParameters(0.7,0.3,0.7,-1.,0.,0.)
-    M = ranking(omega)
-    M.run(file = positions, run_sampling = True, show_output = True, z_bounds)
+    M = ranking(omega, z_bounds)
+    M.run(file = positions, run_sampling = False, show_output = True)
