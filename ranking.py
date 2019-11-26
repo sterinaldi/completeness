@@ -175,7 +175,7 @@ class ranking(cpnest.model.Model):
         self.omega   = omega
 
     def GalInABox2(self, catalog):
-        v = Vizier(columns = ['RAJ2000', 'DEJ2000', 'z'])#, 'GWGC', 'BmagHyp', 'ImagHyp', 'Kmag2', 'Jmag2'])
+        v = Vizier(columns = ['RAJ2000', 'DEJ2000', 'z', 'GWGC', 'Bmag', 'Jmag', 'Kmag', 'Hmag'])
         v.ROW_LIMIT = 99999999
         center = SkyCoord(M.p_pos.means_[0][0], M.p_pos.means_[0][1], unit = (u.rad, u.rad))
         raggio = np.sqrt(np.diag(M.p_pos.covariances_[0])).max()
@@ -184,7 +184,7 @@ class ranking(cpnest.model.Model):
         # for tablei in table:
         #     data = data.append(tablei.to_pandas(), ignore_index = True)
         data = data.append(table[1].to_pandas())
-        return data.dropna()
+        return data.dropna(subset = ['RAJ2000', 'DEJ2000', 'z'])
 
 
     def dropgal(self):
@@ -217,6 +217,24 @@ class ranking(cpnest.model.Model):
         plt.xlabel('$z$')
         plt.ylabel('$p(z)$')
         plt.savefig('pdfz.pdf')
+
+        plt.figure(4)
+        S = plt.scatter((M.catalog['Bmag']-M.catalog['Jmag']), (M.catalog['Jmag']-M.catalog['Kmag']), c = M.catalog['p'])
+        bar = plt.colorbar(S)
+        bar.set_label('p')
+        plt.xlabel('B-J')
+        plt.ylabel('J-K')
+        plt.savefig('colorplot.pdf', bbox_inches = 'tight')
+
+        plt.figure(5)
+        plt.plot(M.catalog['p'], M.catalog['Bmag'], marker = '.', ls ='', label = 'B')
+        plt.plot(M.catalog['p'], M.catalog['Jmag'], marker = '.', ls ='', label = 'J')
+        plt.plot(M.catalog['p'], M.catalog['Hmag'], marker = '.', ls ='', label = 'H')
+        plt.plot(M.catalog['p'], M.catalog['Kmag'], marker = '.', ls ='', label = 'K')
+        plt.legend(loc = 0)
+        plt.xlabel('p')
+        plt.ylabel('magnitude')
+        plt.savefig('p_colorindex.pdf', bbox_inches = 'tight')
 
     def get_names(self):
         names = []
@@ -273,7 +291,7 @@ class ranking(cpnest.model.Model):
         self.catalog['p'] = prob
         self.catalog = self.catalog.sort_values('p', ascending = False)
         # self.get_names()
-        self.catalog.to_csv('rank.txt', header=True, index=None, sep=' ', mode='a')
+        self.catalog.to_csv('rank.txt', header=True, index=None, sep='\t', mode='w')
         if show_output:
             self.plot_outputs()
 
