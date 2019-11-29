@@ -140,6 +140,15 @@ def get_samples(file, names = ['ra','dec','luminosity_distance']):
 
         return samples
 
+    if ext == '.dat':
+        data = np.genfromtxt(file, names = True)
+        dat_names = ['ra','dec','distance']
+
+        for name, name_dat in zip(names, dat_names):
+            samples[name] = data[dat_names]
+
+        return samples
+
 
 
 def pos_posterior(ra_s, dec_s, number = 2):
@@ -301,6 +310,7 @@ if __name__ == '__main__':
 
     positions = 'posterior_samples.json'
     # positions = 'GW170817_GWTC-1.hdf5'
+    # positions = 'posterior_samples_170817.dat'
     z_bounds = [0.02,0.08]
     omega = lal.CreateCosmologicalParameters(0.7,0.3,0.7,-1.,0.,0.)
     M = ranking(omega, z_bounds)
