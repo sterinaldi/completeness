@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
+'''
+Come importo il file ../../cosmolisa/cosmology.c?
+(contiene lal wrappato)
+'''
 from __future__ import division
 
 from astropy.coordinates import SkyCoord
